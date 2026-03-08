@@ -1,0 +1,361 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  compliance_manager
+  auditor
+  viewer
+}
+
+enum Plan {
+  starter
+  growth
+  enterprise
+}
+
+enum ControlStatus {
+  not_started
+  in_progress
+  implemented
+  verified
+}
+
+enum ControlType {
+  manual
+  automated
+  hybrid
+}
+
+enum AutomationStatus {
+  not_automated
+  partially_automated
+  fully_automated
+}
+
+enum CheckStatus {
+  passed
+  failed
+  needs_review
+}
+
+enum NotificationChannel {
+  dashboard
+  email
+  slack
+}
+
+enum NotificationStatus {
+  unread
+  read
+  archived
+}
+
+enum EventType {
+  control_verification
+  policy_update
+  risk_assessment
+  evidence_upload
+  compliance_alert
+}
+
+enum IntegrationProvider {
+  google_workspace
+  microsoft_365
+  aws
+  azure
+  github
+  slack
+  okta
+}
+
+enum SyncFrequency {
+  daily
+  weekly
+  monthly
+}
+
+enum ConnectionStatus {
+  connected
+  disconnected
+  error
+}
+
+enum ReportType {
+  soc2_readiness
+  hipaa_compliance
+  iso27001_readiness
+}
+
+model Organization {
+  id                  String                  @id @default(cuid())
+  name                String
+  plan                Plan                    @default(starter)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  users               User[]
+  frameworkSelections FrameworkSelection[]
+  controlStatuses     ControlImplementation[]
+  policies            Policy[]
+  risks               Risk[]
+  evidence            Evidence[]
+  vendors             Vendor[]
+  auditLogs           AuditLog[]
+  checkRuns           ComplianceCheckRun[]
+  notifications       Notification[]
+  timelineEvents      ComplianceEvent[]
+  integrations        IntegrationConnection[]
+  evidenceMappings    EvidenceControlMapping[]
+  syncJobs            EvidenceSyncJob[]
+  reports             AuditReport[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  email          String       @unique
+  passwordHash   String?
+  name           String?
+  role           UserRole
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedFiles  Evidence[]   @relation("EvidenceUploader")
+}
+
+model Framework {
+  id          String                @id @default(cuid())
+  key         String                @unique
+  name        String
+  description String?
+  controls    Control[]
+  selections  FrameworkSelection[]
+}
+
+model FrameworkSelection {
+  id             String       @id @default(cuid())
+  organizationId String
+  frameworkId    String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  framework      Framework    @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, frameworkId])
+}
+
+model Control {
+  id          String                  @id @default(cuid())
+  frameworkId String
+  code        String
+  title       String
+  description String?
+  framework   Framework               @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+  statuses    ControlImplementation[]
+  evidences   Evidence[]
+  mappings    EvidenceControlMapping[]
+}
+
+model ControlImplementation {
+  id                    String           @id @default(cuid())
+  organizationId        String
+  controlId             String
+  status                ControlStatus    @default(not_started)
+  type                  ControlType      @default(manual)
+  automationStatus      AutomationStatus @default(not_automated)
+  ownerUserId           String?
+  notes                 String?
+  verificationFrequency String           @default("weekly")
+  lastVerificationAt    DateTime?
+  updatedAt             DateTime         @updatedAt
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  control               Control          @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  checkResults          ComplianceCheckResult[]
+}
+
+model ComplianceCheckRun {
+  id             String                  @id @default(cuid())
+  organizationId String
+  scheduledFor   DateTime
+  startedAt      DateTime                @default(now())
+  completedAt    DateTime?
+  cadence        String                  @default("daily")
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  results        ComplianceCheckResult[]
+}
+
+model ComplianceCheckResult {
+  id                      String                @id @default(cuid())
+  checkRunId              String
+  organizationId          String
+  controlImplementationId String
+  checkName               String
+  status                  CheckStatus
+  details                 String?
+  checkedAt               DateTime              @default(now())
+  run                     ComplianceCheckRun    @relation(fields: [checkRunId], references: [id], onDelete: Cascade)
+  controlImplementation   ControlImplementation @relation(fields: [controlImplementationId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationConnection {
+  id             String               @id @default(cuid())
+  organizationId String
+  provider       IntegrationProvider
+  displayName    String
+  status         ConnectionStatus     @default(disconnected)
+  syncFrequency  SyncFrequency        @default(weekly)
+  lastSyncedAt   DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  credentials    IntegrationCredential[]
+  evidence       Evidence[]
+  jobs           EvidenceSyncJob[]
+  mappings       EvidenceControlMapping[]
+
+  @@unique([organizationId, provider])
+}
+
+model IntegrationCredential {
+  id            String                @id @default(cuid())
+  integrationId String
+  key           String
+  valueEncrypted String
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  integration   IntegrationConnection @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, key])
+}
+
+model EvidenceControlMapping {
+  id             String                @id @default(cuid())
+  organizationId String
+  integrationId  String
+  controlId      String
+  evidenceType   String
+  createdAt      DateTime              @default(now())
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integration    IntegrationConnection @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  control        Control               @relation(fields: [controlId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, controlId, evidenceType])
+}
+
+model EvidenceSyncJob {
+  id             String                @id @default(cuid())
+  organizationId String
+  integrationId  String
+  frequency      SyncFrequency
+  startedAt      DateTime              @default(now())
+  completedAt    DateTime?
+  status         String                @default("running")
+  details        String?
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integration    IntegrationConnection @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+model Policy {
+  id             String       @id @default(cuid())
+  organizationId String
+  title          String
+  content        String
+  status         String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Risk {
+  id              String       @id @default(cuid())
+  organizationId  String
+  title           String
+  description     String
+  impactScore     Int
+  likelihoodScore Int
+  severity        Int
+  mitigation      String?
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Evidence {
+  id                    String                 @id @default(cuid())
+  organizationId        String
+  controlId             String
+  integrationConnectionId String?
+  fileName              String
+  storageKey            String
+  contentType           String
+  evidenceType          String                 @default("general")
+  uploadedByUserId      String
+  source                String                 @default("manual")
+  expiresAt             DateTime?
+  createdAt             DateTime               @default(now())
+  organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy            User                   @relation("EvidenceUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  control               Control                @relation(fields: [controlId], references: [id], onDelete: Cascade)
+  integrationConnection IntegrationConnection? @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+}
+
+
+model AuditReport {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           ReportType
+  title          String
+  format         String
+  content        String
+  generatedById  String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Vendor {
+  id                  String       @id @default(cuid())
+  organizationId      String
+  name                String
+  serviceType         String
+  riskLevel           String
+  questionnaireStatus String
+  complianceStatus    String
+  riskScore           Int
+  createdAt           DateTime     @default(now())
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id             String             @id @default(cuid())
+  organizationId String
+  channel        NotificationChannel
+  title          String
+  message        String
+  status         NotificationStatus @default(unread)
+  createdAt      DateTime           @default(now())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model ComplianceEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           EventType
+  title          String
+  description    String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String
+  target         String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
